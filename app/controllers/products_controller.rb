@@ -4,11 +4,19 @@ class ProductsController < ApplicationController
   require 'redis'
   require 'stopwords'
 
+  def initialize
+    @redis = Redis.new(url: ENV['REDIS_URL'] || 'redis://localhost:6379')
+  end
+
   def word_cloud
     url = params[:url]
 
     if url.blank?
       return render json: { error: 'URL cannot be empty' }, status: :bad_request
+    end
+
+    if @redis.get(url)
+      return render json: { error: 'URL has already been processed' }, status: :conflict
     end
 
     description = fetch_amazon_description(url)
@@ -18,6 +26,8 @@ class ProductsController < ApplicationController
     else
       words = clean_text(description)
       word_freq = word_frequency(words)
+
+      @redis.set(url, true, ex: 60)
 
       generate_word_cloud(word_freq)
       render json: { word_frequency: word_freq }, status: :ok
@@ -49,7 +59,7 @@ class ProductsController < ApplicationController
 
   def generate_word_cloud(word_freq)
     File.open('word_freq.txt', 'w') do |file|
-      word_freq.each { |word, freq| file.puts "#{word}:#{freq}" }
+      word_freq.each { |word, freq| file.puts "#{word}" }
     end
   end
 end
