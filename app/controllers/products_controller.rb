@@ -54,7 +54,7 @@ class ProductsController < ApplicationController
   end
 
   def word_frequency(words)
-    words.tally.sort_by { |_, count| -count }
+    words.tally.sort_by { |word, count| [-count, word] }
   end
 
   def generate_word_cloud(word_freq)
