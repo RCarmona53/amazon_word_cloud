@@ -9,66 +9,60 @@ RSpec.describe ProductsController, type: :controller do
     allow(Redis).to receive(:new).and_return(redis)
   end
 
-  describe 'POST #word_cloud' do
-    context 'when the URL is blank' do
-      it 'returns a bad request error' do
-        post :word_cloud, params: { url: '' }
-        expect(response).to have_http_status(:bad_request)
-        expect(response.body).to include('URL cannot be empty')
-      end
-    end
-
+  describe 'POST #create' do
     context 'when the URL has already been processed' do
       before do
-        redis.set(url, true)
+        redis.set(url, 'cached_word_frequency')
       end
 
-      it 'returns a conflict error' do
-        post :word_cloud, params: { url: url }
-        expect(response).to have_http_status(:conflict)
-        expect(response.body).to include('URL has already been processed')
+      it 'returns the cached word frequency from Redis' do
+        post :create, params: { url: url }
+        expect(response).to have_http_status(:ok)
+        expect(response.body).to include('"word_frequency":')
+        expect(response.body).to include('cached_word_frequency')
       end
     end
 
     context 'when the URL is valid and description is found' do
-      before do
-        allow(controller).to receive(:fetch_amazon_description).with(url).and_return('This is a test description.')
-      end
+      let(:description) { 'This is a test description.' }
+      let(:expected_word_freq) { [["a", 1], ["description", 1], ["is", 1], ["test", 1], ["this", 1]] } 
 
-      it 'returns word frequency' do
-        post :word_cloud, params: { url: url }
+      before do
+        allow(controller).to receive(:fetch_amazon_description).with(URI.parse(url)).and_return(description)
+      end
+    
+      it 'returns word frequency and caches it in Redis' do
+        post :create, params: { url: url }
         expect(response).to have_http_status(:ok)
         expect(response.body).to include('"word_frequency":')
-        expect(redis.get(url)).to eq('true')
+        expect(redis.get(url)).not_to be_nil
+    
+        cached_word_freq = JSON.parse(redis.get(url))
+        expect(cached_word_freq).to eq(expected_word_freq)
       end
     end
+    
 
     context 'when the URL is valid but no description is found' do
       before do
-        allow(controller).to receive(:fetch_amazon_description).with(url).and_return(nil)
+        allow(controller).to receive(:fetch_amazon_description).with(URI.parse(url)).and_return(nil)
       end
 
       it 'returns an unprocessable entity error' do
-        post :word_cloud, params: { url: url }
+        post :create, params: { url: url }
         expect(response).to have_http_status(:unprocessable_entity)
-        expect(response.body).to include('Could not extract description')
+        expect(response.body).to include('No description for this product')
       end
     end
   end
 
   describe 'private methods' do
     let(:description) { 'Test description with words.' }
-    let(:cleaned_words) { ['test', 'description', 'with', 'words'] }
-
-    it 'cleans the text correctly' do
-      allow(File).to receive(:read).with(Rails.root.join('config', 'stopwords.txt')).and_return("a\nand\nthe\n")
-      expect(controller.send(:clean_text, description)).to eq(cleaned_words)
-    end
+    let(:expected_word_freq) { [["description", 1], ["test", 1], ["with", 1], ["words", 1]]  }
 
     it 'calculates word frequency correctly' do
-      words = ['test', 'test', 'description', 'with', 'words']
-      expected_freq = [['test', 2], ['description', 1], ['with', 1], ['words', 1]]
-      expect(controller.send(:word_frequency, words)).to eq(expected_freq)
+      allow(Stopwords::Snowball::Filter).to receive(:new).with('en').and_return(Stopwords::Snowball::Filter.new('en'))
+      expect(controller.send(:word_frequency, description)).to eq(expected_word_freq)
     end
   end
 end

@@ -8,7 +8,7 @@ gem "sqlite3", "~> 1.4"
 gem "puma", "~> 5.0"
 gem "nokogiri"
 gem "httparty"
-gem "redis"
+gem "redis", '~> 4.2'
 gem 'stopwords', '~> 0.2'
 gem 'stopwords-filter', require: 'stopwords'
 gem "tzinfo-data", platforms: %i[ mingw mswin x64_mingw jruby ]

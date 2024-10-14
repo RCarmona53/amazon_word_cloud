@@ -1,40 +1,36 @@
 class ProductsController < ApplicationController
-  require 'nokogiri'
-  require 'httparty'
-  require 'redis'
-  require 'stopwords'
-
-  def initialize
-    @redis = Redis.new(url: ENV['REDIS_URL'] || 'redis://localhost:6379')
-  end
-
-  def word_cloud
-    url = params[:url]
-
-    if url.blank?
-      return render json: { error: 'URL cannot be empty' }, status: :bad_request
-    end
-
-    if @redis.get(url)
-      return render json: { error: 'URL has already been processed' }, status: :conflict
-    end
-
-    description = fetch_amazon_description(url)
-
-    if description.nil?
-      render json: { error: 'Could not extract description' }, status: :unprocessable_entity
+  before_action :validate_url
+ 
+  def create
+    if $redis.exists?(uri)
+      render json: { word_frequency: $redis.get(uri) }, status: :ok
     else
-      words = clean_text(description)
-      word_freq = word_frequency(words)
+      description = fetch_amazon_description(uri)
+      if description.nil?
+        render json: { error: 'No description for this product' }, status: :unprocessable_entity
+      else
+        words = word_frequency(description) 
 
-      @redis.set(url, true, ex: 60)
+        $redis.set(uri, words, ex:3600)
 
-      generate_word_cloud(word_freq)
-      render json: { word_frequency: word_freq }, status: :ok
+        render json: { word_frequency: words }, status: :ok
+      end
     end
   end
 
   private
+
+  def create_params
+    params.permit(:url)
+  end
+
+  def uri
+    @uri ||= URI.parse(create_params[:url])
+  end
+
+  def validate_url
+    render json: { error: 'Invalid or empty URL' }, status: :bad_request if uri.blank?
+  end
 
   def fetch_amazon_description(url)
     response = HTTParty.get(url, headers: { 'User-Agent': 'Mozilla/5.0' })
@@ -47,19 +43,10 @@ class ProductsController < ApplicationController
     nil
   end
 
-  def clean_text(text)
+  def word_frequency(text)
     words = text.downcase.scan(/\b[a-z]+\b/)
-    stop_words = Set.new(File.read(Rails.root.join('config', 'stopwords.txt')).split)
-    words.reject { |word| stop_words.include?(word) }
-  end
-
-  def word_frequency(words)
+    filter = Stopwords::Snowball::Filter.new 'en'
+    words.reject { |word| filter.stopword?(word) }
     words.tally.sort_by { |word, count| [-count, word] }
-  end
-
-  def generate_word_cloud(word_freq)
-    File.open('word_freq.txt', 'w') do |file|
-      word_freq.each { |word, freq| file.puts "#{word}" }
-    end
   end
 end
